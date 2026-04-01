@@ -93,6 +93,94 @@ def fmt_money(x: float | None) -> str:
     return f"${x:,.0f}"
 
 
+def shorten_label(text: str, max_len: int = 18) -> str:
+    clean = " ".join(str(text or "").split())
+    if len(clean) <= max_len:
+        return clean
+    words = clean.split()
+    if len(words) > 1:
+        compact = " ".join(words[:2])
+        if len(compact) <= max_len:
+            return compact
+    return clean[: max_len - 1].rstrip() + "…"
+
+
+def build_treemap_primary_label(row: pd.Series, show_full_names: bool, prefer_ticker: bool = True) -> str:
+    ticker = str(row.get("ticker") or "").strip().upper()
+    issuer = str(row.get("issuer_clean") or "").strip()
+    if ticker and prefer_ticker:
+        return ticker
+    if show_full_names and len(issuer) <= 20:
+        return issuer
+    if ticker and not prefer_ticker and len(issuer) <= 10:
+        return issuer
+    return shorten_label(issuer, max_len=16)
+
+
+def build_treemap_text(row: pd.Series, show_full_names: bool, prefer_ticker: bool = True) -> str:
+    label = build_treemap_primary_label(row, show_full_names=show_full_names, prefer_ticker=prefer_ticker)
+    weight_pct = float(row.get("weight_pct", 0) or 0)
+    if weight_pct >= 2.5:
+        return f"<b>{label}</b><br>{weight_pct:.2f}%"
+    if weight_pct >= 0.45:
+        return f"<b>{label}</b>"
+    if weight_pct >= 0.18 and str(row.get("ticker") or "").strip():
+        return label
+    return ""
+
+
+def build_treemap_nodes(manager_name: str, treemap_df: pd.DataFrame) -> tuple[list[str], list[str], list[str], list[float], list[str], list[list[str]]]:
+    ids: list[str] = []
+    labels: list[str] = []
+    parents: list[str] = []
+    values: list[float] = []
+    colors: list[str] = []
+    customdata: list[list[str]] = []
+
+    root_id = "root"
+    total_weight = float(treemap_df["weight_pct"].sum())
+    ids.append(root_id)
+    labels.append(manager_name)
+    parents.append("")
+    values.append(total_weight)
+    colors.append("#f8fafc")
+    customdata.append([f"<b>{manager_name}</b>", manager_name, "—", f"{total_weight:.2f}", "—", "Portfolio", "—"])
+
+    sector_weights = treemap_df.groupby("sector", dropna=False)["weight_pct"].sum().sort_values(ascending=False)
+    for sector_name, sector_weight in sector_weights.items():
+        sector_id = f"sector::{sector_name}"
+        sector_label = str(sector_name)
+        sector_color = SECTOR_COLOR_MAP.get(sector_label, SECTOR_COLOR_MAP["Other"])
+        ids.append(sector_id)
+        labels.append(sector_label)
+        parents.append(root_id)
+        values.append(float(sector_weight))
+        colors.append(sector_color)
+        customdata.append([f"<b>{sector_label}</b>", sector_label, "—", f"{float(sector_weight):.2f}", "—", sector_label, "—"])
+
+        sector_rows = treemap_df[treemap_df["sector"] == sector_name].copy()
+        for _, row in sector_rows.iterrows():
+            leaf_id = f"leaf::{sector_label}::{row.name}::{row.get('cusip', '')}"
+            ids.append(leaf_id)
+            labels.append(str(row["plot_label"]))
+            parents.append(sector_id)
+            values.append(float(row["weight_pct"]))
+            colors.append(sector_color)
+            customdata.append(
+                [
+                    str(row["treemap_text"]),
+                    str(row["hover_issuer"]),
+                    str(row["hover_ticker"]),
+                    f"{float(row['weight_pct']):.2f}",
+                    str(row["hover_market_value"]),
+                    str(row["sector"]),
+                    str(row["hover_themes"]),
+                ]
+            )
+
+    return ids, labels, parents, values, colors, customdata
+
+
 def metric_card(label: str, value: str, sub: str = "") -> None:
     st.markdown(
         f"""
@@ -273,40 +361,49 @@ def render_overview(manager_name: str, portfolio: pd.DataFrame, stats: dict, del
             treemap_df = portfolio.head(30).copy()
         treemap_df = treemap_df.head(80).copy()
         treemap_df["sector"] = treemap_df["sector"].fillna("Other").replace("", "Other")
-        treemap_df["plot_label"] = treemap_df["label"] if show_ticker_first else treemap_df["issuer_clean"]
-        if not show_full_names:
-            treemap_df["plot_label"] = treemap_df["plot_label"].str.slice(0, 24)
         treemap_df["weight_pct"] = treemap_df["weight"] * 100
-        fig = px.treemap(
-            treemap_df,
-            path=[px.Constant(manager_name), "sector", "plot_label"],
-            values="weight_pct",
-            color="sector",
-            color_discrete_map=SECTOR_COLOR_MAP,
-            hover_data={
-                "ticker": True,
-                "exchange": True,
-                "sector": True,
-                "themes": True,
-                "market_value_usd": ":,.0f",
-                "shares": True,
-                "cusip": True,
-                "weight_pct": ":.2f",
-                "plot_label": False,
-            },
+        treemap_df["plot_label"] = treemap_df.apply(
+            lambda row: build_treemap_primary_label(row, show_full_names=show_full_names, prefer_ticker=show_ticker_first),
+            axis=1,
         )
-        fig.update_traces(
-            texttemplate="<b>%{label}</b><br>%{value:.2f}%",
-            textfont=dict(color="white", size=14),
-            marker=dict(line=dict(color="rgba(248,250,252,0.92)", width=2)),
-            hoverlabel=dict(bgcolor="#0f172a", font_color="white"),
-            root_color="#dbeafe",
+        treemap_df["treemap_text"] = treemap_df.apply(
+            lambda row: build_treemap_text(row, show_full_names=show_full_names, prefer_ticker=show_ticker_first),
+            axis=1,
+        )
+        treemap_df["hover_ticker"] = treemap_df["ticker"].replace("", "—")
+        treemap_df["hover_issuer"] = treemap_df["issuer_clean"]
+        treemap_df["hover_market_value"] = treemap_df["market_value_usd"].map(fmt_money)
+        treemap_df["hover_themes"] = treemap_df["themes"].replace("", "—")
+        ids, labels, parents, values, colors, customdata = build_treemap_nodes(manager_name, treemap_df)
+        fig = go.Figure(
+            go.Treemap(
+                ids=ids,
+                labels=labels,
+                parents=parents,
+                values=values,
+                branchvalues="total",
+                customdata=customdata,
+                marker=dict(colors=colors, line=dict(color="rgba(248,250,252,0.92)", width=1.8)),
+                texttemplate="%{customdata[0]}",
+                textfont=dict(color="white", size=12, family="Arial Black, Arial, sans-serif"),
+                hoverlabel=dict(bgcolor="#0f172a", font_color="white"),
+                root_color="#dbeafe",
+                tiling=dict(pad=3),
+                hovertemplate=(
+                    "<b>%{customdata[1]}</b><br>"
+                    "Ticker: %{customdata[2]}<br>"
+                    "Weight: %{customdata[3]}%<br>"
+                    "Market Value: %{customdata[4]}<br>"
+                    "Sector: %{customdata[5]}<br>"
+                    "Themes: %{customdata[6]}"
+                    "<extra></extra>"
+                ),
+            )
         )
         fig.update_layout(
             margin=dict(t=12, l=8, r=8, b=8),
             height=700,
             paper_bgcolor="rgba(0,0,0,0)",
-            uniformtext=dict(minsize=11, mode="hide"),
         )
         st.plotly_chart(fig, use_container_width=True)
 
