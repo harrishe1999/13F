@@ -1,75 +1,141 @@
 # 13F Holdings Intelligence Dashboard
 
-A Streamlit research dashboard that pulls **real SEC 13F filings** and layers on portfolio analytics.
+A Streamlit dashboard for exploring real SEC 13F filings with portfolio analytics, manager search, quarter comparisons, historical trends, and export tools.
 
-## What this version now includes
+This app is designed for research use: it pulls public SEC filing data, parses the filing XML directly, normalizes holdings into a usable table, and layers on visual analysis for well-known investment managers.
 
-- quarter-selectable portfolio treemap based on actual 13F weights
-- SEC-backed manager name search to resolve manager name -> CIK
-- disk-backed request caching to reduce repeated SEC pulls
-- ticker mapping layer using SEC's public company ticker reference file
-- sector and theme overlays for portfolio profiling
-- quarter-over-quarter adds / trims / new / exited positions
-- historical weight line charts, rank-history charts, and weight heatmap
-- multi-manager comparison snapshot for the same quarter
-- overlap heatmap across managers' top positions
-- concentration diagnostics (top 10 concentration, HHI)
-- optional price-following return layer using Yahoo Finance
-- exportable quarter tables, delta tables, and text report
+## What It Does
 
-## Run locally
+- loads real 13F-HR filings from SEC EDGAR
+- shows quarter-selectable holdings for a manager
+- displays an enhanced treemap with sector-based color grouping
+- shows official SEC filing total value at the top of the page
+- compares quarters to identify new, added, trimmed, stable, and exited positions
+- builds multi-quarter holding histories and rank trends
+- compares multiple managers in the same quarter
+- estimates simple follow-along returns with Yahoo Finance when available
+- exports current-quarter tables, change tables, and a text summary
+
+## Current UX
+
+The sidebar now has two separate manager-selection flows:
+
+- `Preset investors`
+  - curated list of popular managers
+  - changing the preset updates the holdings view immediately
+
+- `Search Investor`
+  - supports fuzzy search such as `berkshire`, `pershing`, `scion`, or `Duan Yongping`
+  - `Search Matches` loads candidate managers into a dropdown
+  - `Show Result` switches the current holdings view only when you explicitly click it
+  - typing in search no longer causes the holdings page to constantly refresh
+
+The current view still shows the selected manager's CIK in the metric area, but the preset dropdown itself stays clean and name-only.
+
+## Data Sources
+
+The app uses public data only:
+
+- SEC submissions JSON from `data.sec.gov`
+- SEC filing archive directories and filing XML from `sec.gov`
+- SEC company ticker reference file `company_tickers_exchange.json`
+- optional Yahoo Finance prices for the convenience return layer
+
+No paid API key is required.
+
+## Important Data Notes
+
+- 13F is delayed by design, so this is a historical holdings dashboard, not a live portfolio tracker.
+- the top `Total Reported Value` metric uses the official SEC filing cover-page total
+- holdings tables, charts, and weights are built from the information table after your selected filters are applied
+- ticker matching is best-effort and issuer/CUSIP-based filings are not a perfect security master
+- sector and theme tagging are rules-based overlays, not vendor-grade classifications
+- the return layer is approximate and meant for convenience, not audit-grade attribution
+
+## Featured Managers
+
+The curated preset list currently includes names such as:
+
+- Berkshire Hathaway
+- Bridgewater Associates
+- Pershing Square Capital
+- Scion Asset Management
+- H&H International Investment, LLC
+- Citadel Advisors
+- Renaissance Technologies
+- Viking Global Investors
+- Point72 Asset Management
+
+You can also search SEC entities outside the curated list and display them through the search flow.
+
+## Project Structure
+
+- `app.py`
+  - Streamlit UI
+  - manager selection flow
+  - charts, tables, diagnostics, and downloads
+
+- `data_source.py`
+  - SEC requests and caching
+  - filing discovery
+  - filing cover-page metadata parsing
+  - XML holdings parsing
+  - value normalization
+  - portfolio analytics and comparison logic
+
+- `managers.py`
+  - curated manager database
+  - fuzzy local manager search
+
+- `tests/test_data_source.py`
+  - basic tests for filing total parsing and unit normalization
+
+## Run Locally
 
 ```bash
 cd 13f_dashboard
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 export SEC_USER_AGENT="Your Name your_email@example.com"
-streamlit run app.py
+python3 -m streamlit run app.py
 ```
 
 On Windows PowerShell:
 
 ```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 $env:SEC_USER_AGENT="Your Name your_email@example.com"
-streamlit run app.py
+python -m streamlit run app.py
 ```
 
-## Does this require an API key?
+Then open the local URL printed by Streamlit, usually `http://localhost:8501`.
 
-No paid API key is required for the SEC data layer.
+## Environment Requirements
 
-The app uses:
-
-- SEC public submissions JSON on `data.sec.gov`
-- SEC filing archive directories and XML information tables on `sec.gov`
-- SEC public ticker reference file `company_tickers_exchange.json`
-- optional Yahoo Finance market-price lookup for the convenience return layer
-
-What it **does** need:
-
+- Python 3.11+ recommended
 - normal internet access
-- a proper `User-Agent` header for SEC fair-access compliance
+- a reasonable `SEC_USER_AGENT` string for SEC fair-access compliance
 
-## Architecture notes
+## Development Notes
 
-- `data_source.py` handles SEC pulls, XML parsing, disk caching, ticker matching, sector/theme tagging, history building, and comparison analytics.
-- `app.py` renders the Streamlit UI, charts, diagnostics, exports, and multi-manager views.
-- `managers.py` stores popular preloaded 13F managers.
-- `.cache/` is created locally at runtime for repeated network responses.
+- network responses are cached locally in `.cache/`
+- `.venv/`, `.cache/`, and Python cache files are ignored by git
+- the app has been tested against Berkshire Hathaway's latest available filing to verify the official reported-value logic
 
-## Important limitations
+## Known Limitations
 
-- 13F is delayed by design. This is for **historical portfolio analysis**, not real-time holdings.
-- 13F does **not** fully represent all economic exposure.
-- Ticker mapping is best-effort. The raw 13F source is issuer/CUSIP-centric.
-- Sector/theme tagging is rules-based, not a commercial taxonomy feed.
-- The return layer is a convenience estimate, not audit-grade attribution.
+- some SEC search results can include non-investment entities with similar names
+- multi-manager overlap is based on visible top positions, not a full security-master-normalized overlap model
+- managers that file unusual XML structures may still need edge-case handling
+- Streamlit currently emits `use_container_width` deprecation warnings; these do not affect app behavior
 
-## Suggested next upgrades after this build
+## Roadmap Ideas
 
-- institutional-grade CUSIP/security-master integration
-- user-defined watchlists and alerts for major quarter changes
-- PDF/PNG report export for deck-ready output
-- persistent favorites / saved manager sets
-- follow-along strategy backtesting using filing-date availability assumptions
+- cleaner investor search ranking for ambiguous SEC names
+- saved manager watchlists
+- PDF or image export for presentation-ready reports
+- more robust security-master style ticker resolution
+- filing-date-aware backtesting workflows
